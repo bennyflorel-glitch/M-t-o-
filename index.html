@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Météo & Réveil Vocal</title>
+  <style>
+    * { box-sizing: border-box; font-family: system-ui, sans-serif; }
+    body {
+      margin: 0; padding: 16px;
+      background: #0f172a; color: #f8fafc;
+      display: flex; justify-content: center;
+    }
+    .app { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 14px; }
+    .card {
+      background: #1e293b; border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 20px; padding: 18px;
+    }
+    .top { display: flex; justify-content: space-between; font-size: 0.8rem; color: #94a3b8; margin-bottom: 10px; }
+    .badge { background: rgba(56,189,248,0.15); color: #38bdf8; padding: 3px 8px; border-radius: 10px; font-weight: 600; }
+    .badge.off { background: rgba(251,191,36,0.15); color: #fbbf24; }
+    .weather { display: flex; justify-content: space-between; align-items: center; }
+    .temp { font-size: 2.8rem; font-weight: 700; }
+    .icon { font-size: 3.2rem; }
+    .advice {
+      margin-top: 14px; padding: 12px; border-radius: 12px;
+      background: rgba(56,189,248,0.12); border-left: 4px solid #38bdf8;
+      font-size: 0.95rem; line-height: 1.4;
+    }
+    h3 { margin: 0 0 10px; font-size: 1rem; color: #38bdf8; }
+    .row { display: flex; gap: 8px; margin-bottom: 8px; }
+    input, select, button {
+      padding: 10px; border-radius: 10px; font-size: 0.9rem;
+      border: 1px solid rgba(255,255,255,0.15); background: #0f172a; color: #fff;
+    }
+    input[type="text"] { flex: 1; }
+    button { background: #38bdf8; color: #0f172a; font-weight: 700; border: none; cursor: pointer; }
+    button.sec { background: rgba(255,255,255,0.1); color: #fff; }
+    ul { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 6px; }
+    li {
+      display: flex; justify-content: space-between; align-items: center;
+      background: #0f172a; padding: 8px 12px; border-radius: 10px; font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- CARTE MÉTÉO & CONSEILS -->
+  <div class="card">
+    <div class="top">
+      <span id="dateTxt">--</span>
+      <span id="netBadge" class="badge">En ligne</span>
+    </div>
+    <div class="weather">
+      <div>
+        <div class="temp" id="tempTxt">--°C</div>
+        <div id="descTxt" style="color:#94a3b8;">--</div>
+        <div id="cityTxt" style="color:#94a3b8; font-size:0.8rem;"></div>
+      </div>
+      <div class="icon" id="iconTxt">☀️</div>
+    </div>
+    <div class="advice" id="adviceTxt">Chargement...</div>
+    <div class="top" style="margin:12px 0 0;">
+      <span id="batTxt">🔋 Batterie : --</span>
+      <span id="updTxt">MàJ : --</span>
+    </div>
+  </div>
+
+  <!-- RÉVEIL VOCAL -->
+  <div class="card">
+    <h3>⏰ Réveil Vocal</h3>
+    <div class="row">
+      <input type="time" id="alarmTime" value="07:00" style="flex:1" />
+      <button onclick="toggleAlarm()" id="alarmBtn">Activer</button>
+    </div>
+    <div id="alarmMsg" style="color:#4ade80; font-size:0.85rem; margin-bottom:8px;"></div>
+    <button style="width:100%" onclick="speakBriefing()">🔊 Tester le réveil vocal maintenant</button>
+  </div>
+
+  <!-- AGENDA -->
+  <div class="card">
+    <h3>📅 Mon Agenda du jour</h3>
+    <div class="row">
+      <input type="time" id="evTime" value="09:00" />
+      <input type="text" id="evTitle" placeholder="Ex: Réunion, Sport..." />
+      <button onclick="addEv()">+</button>
+    </div>
+    <ul id="evList"></ul>
+  </div>
+
+  <!-- MÉTÉO RÉELLE OU TEST -->
+  <div class="card">
+    <h3>🌍 Choisir ma ville (ou tester)</h3>
+    <div class="row">
+      <input type="text" id="cityInput" placeholder="Ex: Brazzaville, Pointe-Noire..." />
+      <button onclick="fetchCityWeather()">MàJ</button>
+    </div>
+    <select style="width:100%" onchange="simWeather(this.value)">
+      <option value="">-- Tester un autre temps hors ligne --</option>
+      <option value="rain">🌧️ Pluie (24°C) → Conseil parapluie</option>
+      <option value="hot">☀️ Chaleur (35°C) → Conseil boire de l'eau</option>
+      <option value="storm">⛈️ Orage (22°C) → Conseil prudence</option>
+      <option value="cool">💨 Fraîcheur (15°C) → Conseil veste</option>
+    </select>
+  </div>
+
+</div>
+
+<script>
+  let weather = JSON.parse(localStorage.getItem('w_data') || 'null') || {
+    city: 'Brazzaville (Démo)', temp: 32, code: 0, upd: 'Hors ligne', forecast: null
+  };
+  let events = JSON.parse(localStorage.getItem('w_events') || 'null') || [
+    { time: '09:00', title: 'Rendez-vous du matin' }
+  ];
+  let bat = { level: null, charging: false };
+  let alarmOn = false, lastTriggered = null;
+
+  function todayISO() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+
+  function updateStatus() {
+    document.getElementById('dateTxt').textContent = new Date().toLocaleDateString('fr-FR', {
+      weekday: 'long', day: 'numeric', month: 'long'
+    });
+    const b = document.getElementById('netBadge');
+    b.textContent = navigator.onLine ? '🟢 En ligne' : '🟠 Hors ligne';
+    b.className = navigator.onLine ? 'badge' : 'badge off';
+  }
+  window.addEventListener('online', updateStatus);
+  window.addEventListener('offline', updateStatus);
+
+  if ('getBattery' in navigator) {
+    navigator.getBattery().then(b => {
+      const show = () => {
+        bat.level = Math.round(b.level * 100);
+        bat.charging = b.charging;
+        document.getElementById('batTxt').textContent = `🔋 ${bat.level}% ${b.charging ? '(en charge)' : ''}`;
+      };
+      show();
+      b.addEventListener('levelchange', show);
+      b.addEventListener('chargingchange', show);
+    });
+  }
+
+  function getAdvice(temp, code) {
+    let icon = '☀️', desc = 'Ciel dégagé', adv = [];
+    if ([1,2,3].includes(code)) { icon = '⛅'; desc = 'Nuageux'; }
+    else if ([45,48].includes(code)) { icon = '🌫️'; desc = 'Brouillard'; adv.push('Soyez prudent sur la route.'); }
+    else if ([51,53,55,61,63,65,80,81,82].includes(code)) {
+      icon = '🌧️'; desc = 'Pluie';
+      adv.push("N'oubliez pas votre parapluie !");
+    } else if ([95,96,99].includes(code)) {
+      icon = '⛈️'; desc = 'Orage';
+      adv.push("Orages prévus : prenez votre parapluie et restez à l'abri.");
+    }
+    if (temp >= 30) adv.push("Il va faire chaud : n'oubliez pas de boire beaucoup d'eau.");
+    else if (temp <= 16) adv.push("Il fait frais : pensez à prendre une veste.");
+    if (adv.length === 0) adv.push("Belle journée prévue ! Pensez à bien vous hydrater.");
+    return { icon, desc, text: adv.join(' ') };
+  }
+
+  function renderWeather() {
+    if (weather.forecast) {
+      const i = weather.forecast.time.indexOf(todayISO());
+      if (i !== -1 && weather.updDate !== todayISO()) {
+        weather.temp = weather.forecast.temperature_2m_max[i];
+        weather.code = weather.forecast.weathercode[i];
+        weather.updDate = todayISO();
+      }
+    }
+    const info = getAdvice(weather.temp, weather.code);
+    document.getElementById('tempTxt').textContent = `${Math.round(weather.temp)}°C`;
+    document.getElementById('iconTxt').textContent = info.icon;
+    document.getElementById('descTxt').textContent = info.desc;
+    document.getElementById('cityTxt').textContent = weather.city;
+    document.getElementById('adviceTxt').textContent = `💡 Conseil : ${info.text}`;
+    document.getElementById('updTxt').textContent = `MàJ : ${weather.upd}`;
+  }
+
+  async function fetchCityWeather() {
+    const city = document.getElementById('cityInput').value.trim();
+    if (!city) return alert("Écrivez le nom d'une ville !");
+    if (!navigator.onLine) return alert("Pas d'internet : utilisation du cache hors ligne.");
+    try {
+      const g = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=fr`);
+      const gData = await g.json();
+      if (!gData.results || !gData.results.length) return alert("Ville introuvable.");
+      const { latitude, longitude, name } = gData.results[0];
+      const w = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true&daily=weathercode,temperature_2m_max&timezone=auto`);
+      const wData = await w.json();
+      weather = {
+        city: name,
+        temp: wData.current_weather.temperature,
+        code: wData.current_weather.weathercode,
+        updDate: todayISO(),
+        upd: new Date().toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'}),
+        forecast: wData.daily
+      };
+      localStorage.setItem('w_data', JSON.stringify(weather));
+      renderWeather();
+    } catch (e) { alert("Erreur réseau."); }
+  }
+
+  function simWeather(type) {
+    if (!type) return;
+    const p = {
+      rain: { city:'Test Pluie', temp:24, code:63 },
+      hot:  { city:'Test Chaleur', temp:35, code:0 },
+      storm:{ city:'Test Orage', temp:22, code:95 },
+      cool: { city:'Test Fraîcheur', temp:15, code:2 }
+    }[type];
+    weather = { ...p, updDate: todayISO(), upd: 'Simulation', forecast: weather.forecast };
+    localStorage.setItem('w_data', JSON.stringify(weather));
+    renderWeather();
+  }
+
+  function renderEvents() {
+    events.sort((a,b) => a.time.localeCompare(b.time));
+    const ul = document.getElementById('evList');
+    ul.innerHTML = '';
+    events.forEach((ev, i) => {
+      const li = document.createElement('li');
+      li.innerHTML = `<span><b>${ev.time}</b> — ${ev.title}</span>
+                      <button class="sec" style="padding:3px 8px" onclick="delEv(${i})">✕</button>`;
+      ul.appendChild(li);
+    });
+    localStorage.setItem('w_events', JSON.stringify(events));
+  }
+  function addEv() {
+    const t = document.getElementById('evTime').value;
+    const v = document.getElementById('evTitle').value.trim();
+    if (!v) return;
+    events.push({ time: t, title: v });
+    document.getElementById('evTitle').value = '';
+    renderEvents();
+  }
+  function delEv(i) { events.splice(i, 1); renderEvents(); }
+
+  function speakBriefing() {
+    if (!('speechSynthesis' in window)) {
+      return alert("Ouvrez ce fichier dans Google Chrome pour activer la voix !");
+    }
+    window.speechSynthesis.cancel();
+    const dateStr = new Date().toLocaleDateString('fr-FR', { weekday:'long', day:'numeric', month:'long' });
+    const info = getAdvice(weather.temp, weather.code);
+    let phone = navigator.onLine ? "Le téléphone est connecté à internet." : "Le téléphone est hors ligne.";
+    if (bat.level !== null) phone += ` Batterie à ${bat.level} pour cent${bat.charging ? ' et en charge' : ''}.`;
+    const ag = events.length
+      ? `Voici votre agenda : ${events.map(e => `à ${e.time.replace(':',' heures ')}, ${e.title}`).join('. ')}.`
+      : "Aucun rendez-vous prévu aujourd'hui.";
+
+    const msg = `Bonjour ! Nous sommes le ${dateStr}. Météo à ${weather.city} : ${info.desc}, ${Math.round(weather.temp)} degrés. ${info.text} ${phone} ${ag} Bonne journée !`;
+    const u = new SpeechSynthesisUtterance(msg);
+    u.lang = 'fr-FR';
+    const fr = window.speechSynthesis.getVoices().find(v => v.lang.startsWith('fr'));
+    if (fr) u.voice = fr;
+    window.speechSynthesis.speak(u);
+  }
+
+  function toggleAlarm() {
+    alarmOn = !alarmOn;
+    document.getElementById('alarmBtn').textContent = alarmOn ? 'Désactiver' : 'Activer';
+    document.getElementById('alarmMsg').textContent = alarmOn
+      ? `✅ Réveil prêt pour ${document.getElementById('alarmTime').value}` : '';
+  }
+
+  setInterval(() => {
+    if (!alarmOn) return;
+    const now = new Date().toTimeString().slice(0,5);
+    if (now === document.getElementById('alarmTime').value && lastTriggered !== now) {
+      lastTriggered = now;
+      speakBriefing();
+    }
+  }, 1000);
+
+  if ('speechSynthesis' in window) window.speechSynthesis.getVoices();
+  updateStatus(); renderWeather(); renderEvents();
+</script>
+</body>
+</html>
